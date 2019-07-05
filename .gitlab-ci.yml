@@ -1,0 +1,71 @@
+stages:
+  - deploy
+
+deploy:
+  image: node:10.15.0-stretch
+  stage: deploy
+  only:
+    - master
+  only:
+    - tags
+  before_script:
+    # Delete dependency repos
+    - rm -rf ../info.jackdouglas
+
+    # Clear the start date variable
+    - rm -f ./start_date
+
+    # Remove the success file if exists
+    - rm -f ../success
+
+    # Set the start date so we can time the whole deploy
+    - echo "$(date +%s)" >> start_date
+
+    # Send the webhook message
+    # - 'export TIMESTAMP="$(date -u +"%Y-%m-%dT%H:%M:%SZ")" && curl -X POST --data "{\"embeds\":[{\"title\":\"Started Production Webapp Deploy\",\"description\":\"**Last commit:** [\`$CI_COMMIT_SHORT_SHA\`](https://gitlab.com/$CI_PROJECT_PATH/commit/$CI_COMMIT_SHA)\n**Tag:** \`$CI_COMMIT_TAG\`\n**Run by:** [GitLab Pipeline]($CI_JOB_URL)\",\"color\":\"4307075\",\"timestamp\":\"$TIMESTAMP\",\"author\":{\"name\":\"Production Webapp Deploy Bot\",\"icon_url\":\"https://cdn.auth0.com/blog/vuejs/vue-logo.png\"},\"footer\":{\"text\":\"Made with ⚡ by Tetrabyte\"}}]}" -H "Content-Type: application/json" $DISCORD_DEPLOY_WEBHOOK'
+
+    # Make .ssh directory for ssh keys and known hosts
+    - mkdir ~/.ssh
+
+    # Write SSH key from variables and store gitlab.com in known hosts
+    - ssh-keyscan -H gitlab.com >> ~/.ssh/known_hosts
+    - echo "$GIT_SSH_KEY" > ~/.ssh/id_rsa
+
+    # Set permissions on ssh key to 400 so they're not too open
+    - chmod 0400 ~/.ssh/id_rsa
+
+    # Clone the core, source, and pulse repositories to the directory right before (notify.me/front-end)
+    - git clone git@gitlab.com:jackdouglas/info.jackdouglas ../me.notify.core
+
+    # Overwrite ssh key and add gitea (TEMP)
+    - rm ~/.ssh/id_rsa
+    - ssh-keyscan -H git.notify.me >> ~/.ssh/known_hosts
+    - echo "$GITEA_SSH_KEY" > ~/.ssh/id_rsa
+
+    # Set permissions
+    - chmod 0400 ~/.ssh/id_rsa
+
+    # Install Google Cloud SDK
+    - echo "deb http://packages.cloud.google.com/apt cloud-sdk-stretch main" | tee /etc/apt/sources.list.d/google-cloud-sdk.list
+    - curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | apt-key add -
+    - apt-get update -y && apt-get install google-cloud-sdk -y   
+  script:
+    # Install the webapp dependencies
+    - npm install && npm install --only=dev
+
+    # Build the webapp
+    - npm run build
+    - echo "Done building webapp, moving dist folder and important files to root http server directory"
+    
+    # Write the google key to the tmp directory and activate the service account
+    - echo $DEPLOY_KEY_FILE_PRODUCTION > /tmp/$CI_PIPELINE_ID.json
+    - gcloud auth activate-service-account --key-file /tmp/$CI_PIPELINE_ID.json
+
+    # Deploy the app to google app engine
+    - gcloud --quiet --project $PROJECT_ID_PRODUCTION app deploy -v ${CI_COMMIT_TAG//./-}
+
+    # Create success file if succeed
+    - touch ../success
+  after_script:
+    # Delete the service key from tmp
+    - rm -f /tmp/$CI_PIPELINE_ID.json
