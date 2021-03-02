@@ -7,7 +7,7 @@
     "serve": "vue-cli-service serve",
     "build": "vue-cli-service build",
     "lint": "vue-cli-service lint",
-    "deploy": "gcloud app deploy"
+    "deploy": "gcloud app deploy --project=personalsite-245818"
   },
   "dependencies": {
     "@vue/cli-plugin-babel": "^3.9.0",
